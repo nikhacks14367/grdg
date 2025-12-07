@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Card Validator (Demo - Client-side only)</title>
+  <style>
+    body{font-family:Inter,system-ui,Arial;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#0f172a;color:#e6eef8}
+    .card{background:#0b1220;padding:24px;border-radius:12px;box-shadow:0 6px 24px rgba(2,6,23,.6);width:360px}
+    label{display:block;margin:10px 0 6px;font-size:13px;color:#9fb0d6}
+    input{width:100%;padding:10px;border-radius:8px;border:1px solid #18324b;background:#071226;color:#e6eef8}
+    .row{display:flex;gap:10px}
+    .small{flex:1}
+    button{margin-top:14px;width:100%;padding:10px;border-radius:8px;border:none;background:#0ea5a0;color:#002;cursor:pointer}
+    .ok{margin-top:12px;color:#a7f3d0}
+    .bad{margin-top:12px;color:#fecaca}
+    .muted{font-size:12px;color:#7b93b0;margin-top:8px}
+    .chip{display:inline-block;padding:6px 8px;border-radius:8px;background:#071a2a;color:#9fd7ff;margin-top:6px;font-size:12px}
+  </style>
+</head>
+<body>
+  <form class="card" id="validator" autocomplete="off" onsubmit="return false;">
+    <h2 style="margin:0 0 8px">Card Validator — Demo</h2>
+    <p class="muted">Client-side only. This checks format (Luhn), card brand detection, expiry and CVV length. Do not use for testing real cards or processing payments. Use a payment gateway (Stripe/PayPal) for real transactions.</p>
+
+    <label for="card">Card number</label>
+    <input id="card" inputmode="numeric" placeholder="4242 4242 4242 4242" maxlength="23">
+    <div id="brand" class="chip" aria-live="polite">Brand: —</div>
+
+    <div class="row">
+      <div class="small">
+        <label for="exp">Expiry (MM/YY)</label>
+        <input id="exp" placeholder="MM/YY" maxlength="5" inputmode="numeric">
+      </div>
+      <div style="width:110px">
+        <label for="cvv">CVV</label>
+        <input id="cvv" inputmode="numeric" maxlength="4" placeholder="123">
+      </div>
+    </div>
+
+    <button id="check">Validate</button>
+
+    <div id="result" aria-live="polite"></div>
+
+    <p class="muted">Demo test cards (do NOT use real cards):<br>Visa: 4242 4242 4242 4242 — Mastercard: 5555 5555 5555 4444</p>
+  </form>
+
+  <script>
+    // Luhn algorithm (returns true if number passes Luhn)
+    function luhnCheck(num) {
+      let sum = 0;
+      let alt = false;
+      for (let i = num.length - 1; i >= 0; i--) {
+        let n = parseInt(num[i], 10);
+        if (alt) {
+          n *= 2;
+          if (n > 9) n -= 9;
+        }
+        sum += n;
+        alt = !alt;
+      }
+      return sum % 10 === 0;
+    }
+
+    // Detect card type by simple BIN patterns
+    function detectCardType(number) {
+      const n = number;
+      if (/^4/.test(n)) return 'Visa';
+      if (/^5[1-5]/.test(n) || /^2(2[2-9]|[3-6]\d|7[01]|720)/.test(n)) return 'Mastercard';
+      if (/^34|^37/.test(n)) return 'American Express';
+      if (/^6(?:011|5)/.test(n) || /^64[4-9]/.test(n)) return 'Discover';
+      return 'Unknown';
+    }
+
+    function onlyDigits(s){return s.replace(/\D/g,'');}
+
+    const cardInput = document.getElementById('card');
+    const brand = document.getElementById('brand');
+    const cvv = document.getElementById('cvv');
+    const exp = document.getElementById('exp');
+    const result = document.getElementById('result');
+
+    // format the card input with spaces for readability
+    cardInput.addEventListener('input', e => {
+      const cursor = cardInput.selectionStart;
+      let v = onlyDigits(cardInput.value).slice(0,19);
+      // group by 4
+      const parts = v.match(/.{1,4}/g) || [];
+      cardInput.value = parts.join(' ');
+      const raw = onlyDigits(cardInput.value);
+      brand.textContent = 'Brand: ' + detectCardType(raw);
+    });
+
+    // simple expiry formatting
+    exp.addEventListener('input', ()=>{
+      let v = onlyDigits(exp.value).slice(0,4);
+      if (v.length >= 3) v = v.slice(0,2) + '/' + v.slice(2);
+      exp.value = v;
+    });
+
+    document.getElementById('check').addEventListener('click', ()=>{
+      result.textContent = '';
+      const raw = onlyDigits(cardInput.value);
+      if (!raw) { result.innerHTML = '<div class="bad">Enter a card number.</div>'; return; }
+      if (raw.length < 12 || raw.length > 19){ result.innerHTML = '<div class="bad">Card number length seems invalid.</div>'; return; }
+
+      const brandName = detectCardType(raw);
+
+      // Luhn check
+      const luhnOk = luhnCheck(raw);
+
+      // expiry check
+      const expVal = exp.value.split('/');
+      let expOk = false;
+      if (expVal.length === 2){
+        const mm = parseInt(expVal[0],10);
+        const yy = parseInt(expVal[1],10);
+        if (!isNaN(mm) && !isNaN(yy) && mm>=1 && mm<=12){
+          // treat YY as 2000+YY for simplicity
+          const fullYear = 2000 + yy;
+          const now = new Date();
+          const lastDay = new Date(fullYear, mm, 0, 23, 59, 59);
+          expOk = lastDay >= now;
+        }
+      }
+
+      // CVV length check
+      const cvvVal = onlyDigits(cvv.value);
+      let cvvOk = false;
+      if (brandName === 'American Express') cvvOk = (cvvVal.length === 4);
+      else cvvOk = (cvvVal.length === 3);
+
+      // Build result
+      let html = '';
+      html += '<div class="muted">Brand detected: ' + brandName + '</div>';
+      html += '<div class="muted">Luhn check: ' + (luhnOk ? '<span class="ok">PASS</span>' : '<span class="bad">FAIL</span>') + '</div>';
+      html += '<div class="muted">Expiry: ' + (expOk ? '<span class="ok">Valid</span>' : '<span class="bad">Expired or invalid</span>') + '</div>';
+      html += '<div class="muted">CVV length: ' + (cvvOk ? '<span class="ok">Looks OK</span>' : '<span class="bad">Wrong length</span>') + '</div>';
+
+      result.innerHTML = html;
+    });
+
+    // Security notice shown in console to remind developer
+    console.log('Demo card validator loaded. This is a client-side validation tool for formatting and Luhn checks only. For real payments, integrate a PCI-compliant gateway (Stripe/PayPal) and never store raw card data.');
+  </script>
+</body>
+</html>
